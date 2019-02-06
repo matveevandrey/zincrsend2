@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+#
+# Incremental ZFS send/recv backup script
+#
+# Based on Dave Eddy <dave@daveeddy.com> zincrsend script
+# By: Andrey Matveev ZiM-Service, LTD
+# License: MIT
+
+#
+#
+#
+
+version="0.3.1-29012019"
+
+
+#########
+# config
+#########
+
+# datasets to send
+#dataset_pattern='tank/pve/datastore'
+dataset_pattern='tank/pve/replica/pve/vm-'
+datasets=(
+#       tank/pve/datastore
+        tank/pve/protected
+)
+
+# datasets to send recursively
+# even if a dataset does not have any descendant datasets, using a
+# recursive zfs send (-R) is preferable because it will result
+# in locally removed snapshots being removed on the remote end as well
+datasets_recursive=(
+#       tank/pve/replica/pve
+)
+
+# information about the server on the receiving end
+remote_server='172.16.51.254'
+#remote_server='localhost'
+remote_user='id51'
+#remote_user='root'
+remote_port='22'
+remote_dataset='tank51/backup' # zpool name most likely
+remote_command_prefix='' # leave blank for nothing
+#remote_ssh_opts=(-i /root/backup/backup.key) # additional opts to give to ssh
+remote_ssh_opts=()
+remote_check="ping -c1 -q -W2 ${remote_server}"
+
+# prefix to use for snapshots created by this script
+snapshot_prefix='autosnap_'
+#snapshot_prefix='zfs-auto-zincrsnap_'
+snapshot_filter='daily'
+
+# sync only mode
+sync_only_mode=1
+
+# send all intermediate snapshots (zfs send -I) =1 or commulutive one  (zfs send -i) =0
+send_full_stream=0
+
+# higher = more output
+verbosity_level=0
+
+# simulate only
+dry_mode=0
+
+
+###########################################
+# parse input variables and update config #
+###########################################
+
+function usage {
+    echo "zincrsend2 v. $version "
+    echo "usage: zincrzend2 [options]"
+    echo "  -synconly           sync only existent snapshots (do not create a new one)"
+    echo "  -quiet              suppress any output"
+    echo "  -debug              debug mode (print more output)"
+    echo "  -trace              trace mode (print as much output as possible)"
+    echo "  -drymode            simulate only"
+    echo "  -fullstream         send full snapshots stream instead of commulative  one"
+    echo "  -remote_server      remote host IP/host"
+    echo "  -remote_port        remote host SSH port"
+    echo "  -remote_user        remote host username"
+    echo "  -remote_dataset     remote ZFS dataset"
+    echo "  -snapshot_prefix    process only snapshots that names begin with defined prefix"
+    echo "  -snapshot_filter    additional snapshots filter"
+    echo "  --help  specify     print this help"
+    exit 1
+}
+
+while [[ $# -gt 0 ]] && [[ ."$1" = .-* ]] ;
+do
+    opt="$1";
+#    echo $opt
+
+    shift;
+    case $opt in
+        "--") break 2;;
+        "-synconly" )
+           sync_only=1;;
+        "-quiet" )
+           verbosity_level=-1;;
+        "-debug" )
+           verbosity_level=1;;
+        "-trace" )
+           verbosity_level=2;;
+        "-drymode" )
+           dry_mode=1;;
+        "-fullstream" )
+           send_full_stream=1;;
+        "-remote_server" )
+           remote_server=$1; shift;;
+        "-remote_user" )
+           remote_user=$1; shift;;
+        "-remote_port" )
+           remote_port=$1; shift;;
+        "-remote_dataset" )
+           remote_dataset=$1; shift;;
+        "-snapshot_prefix" )
+           snapshot_prefix=$1; shift;;
+        "-snapshot_filter" )
+           snapshot_filter=$1; shift;;
+        "--help" )
+           usage;;
+        # ... and so on
+        *) echo >&2 "Invalid option: $@"; exit 1;;
+   esac
+done
+
+#############
+# main code #
+#############
+
+exitcode=0
+
+debug() {
+        ((verbosity_level >= 1)) && echo "[DEBUG] $*" >&2
+        return 0
+}
+trace() {
+        ((verbosity_level >= 2)) && echo "[TRACE] $*" >&2
+        return 0
+}
+
+log() {
+        ((verbosity_level >= 0)) && echo "[LOG] $*" >&2
+        return 0
+}
+
+
+SSH() {
+        trace "ssh ${remote_ssh_opts[*]} $remote_server $remote_command_prefix $*"
+        ssh \
+                "${remote_ssh_opts[@]}" \
+                -l "$remote_user" \
+                -p "$remote_port" \
+                "$remote_server" \
+                "$remote_command_prefix" \
+                "$@"
+}
+
+## check remote system availibility
+check_remote() {
+        debug "checking remote host '${remote_server}' availability [${remote_check}]"
+
+        ## do we have a remote check defined
+        if [ "${remote_check}x" != 'x' ]; then
+                ## run the check
+                $remote_check > /dev/null 2>&1
+                ## exit if above returned non-zero
+                if [ $? != 0 ]; then
+                        log "[ERROR] remote health check '${remote_server}' failed!"
+                        return 1
+                fi
+        fi
+        return 0
+}
+
+process() {
+        local ds=$1
+
+        local snapshot_opts=()
+        local send_opts=()
+        if [[ -n $2 ]]; then
+                # recursive
+                snapshot_opts+=(-r)
+                send_opts+=(-R)
+        fi
+
+        log "processing dataset: $ds"
+
+        # Step 1 - Geting the latest local snapshot or take snapshot locally (if none exists)
+        local now=$(date +%s)
+        local lds=${ds/}
+
+        debug "fetching latest local snapshot for dataset: $lds [prefix: %$snapshot_prefix%; filter=%$snapshot_filter%]"
+
+        # Get remote snapshots list
+        local lsnaplist=($(zfs list -H -o name,creation -p -t snapshot -r "$lds" | \
+                    grep "^$lds@" | \
+                    grep "$snapshot_prefix" | \
+                    grep "$snapshot_filter" | \
+                    sort -n -k 2 -r  | \
+                    awk '{ print $1 }'))
+
+        trace "local snapshots list: $(IFS=$'\n'; echo "${lsnaplist[*]}")"
+        local snap=${lsnaplist[0]}
+
+        if [[ -n $snap ]]; then
+                log "latest local snapshot: $snap"
+        else
+                log "no local snapshot found"
+        fi
+
+        # Step 2 - find the latest remote snapshot
+        local rds=$remote_dataset/${ds#*/}
+        local inc_snap=
+        local inc_opts=()
+
+        debug "fetching latest remote snapshot for dataset: $lds [prefix: %$snapshot_prefix%; filter=%$snapshot_filter%]"
+
+        local rsnaplist=($(SSH zfs list -H -o name,creation -p -t snapshot -r "$rds" | \
+                    grep "^$rds@" | \
+                    grep "$snapshot_prefix" | \
+                    grep "$snapshot_filter" | \
+                    sort -n -k 2 -r | \
+                    awk '{ print $1 }'))
+
+        trace "remote snapshots list: $(IFS=$'\n'; echo "${rsnaplist[*]}")"
+        local rsnap=${rsnaplist[0]}
+
+        if [[ -n $rsnap ]]; then
+                log "latest remote snapshot: $rsnap"
+                inc_snap=${rsnap#*@}
+                # assert that $inc_snap exists locally
+                debug "ckecking $ds@$inc_snap exists localy"
+                debug "zfs list -t snapshot $ds@$inc_snap"
+                if ! zfs list -t snapshot "$ds@$inc_snap" &>/dev/null; then
+                        log "could not find $rsnap locally ($ds@$inc_snap not found)" >&2
+                        debug "calculating most recent common snapshot"
+                        csnaplist=($(comm -12 <(printf '%s\n' "${lsnaplist[@]#*@}" | LC_ALL=C sort) <(printf '%s\n' "${rsnaplist[@]#*@}" | LC_ALL=C sort)))
+                        trace "common snapshots list: $(IFS=$'\n'; echo "${csnaplist[*]}")"
+
+                        inc_snap=${csnaplist[-1]}
+                        if [[ -n $inc_snap ]]; then
+                                log "latest common snapshot: $inc_snap"
+                        else
+                                log "[ERROR] could not find any common snapshots"
+                                return 1
+                        fi
+                else
+                        debug "latest remote snapshot exists localy"
+                fi
+
+                if [[ $send_full_stream -eq 0 ]]; then
+                        inc_opts+=(-i "@$inc_snap")
+                else
+                        inc_opts+=(-I "@$inc_snap")
+                fi
+        else
+                log "no remote snapshot found for $ds"
+        fi
+
+
+        # Step 3: send from latest common to latest local
+        # or do a full send
+
+        # If not local snapshots - create it
+        if ! [[ -n $snap ]]; then
+                local snap=$ds@${snapshot_prefix}$(date '+%Y-%m-%d_%H:%M:%S')
+                log "creating snapshot locally (case1): $snap"
+                if [[ $dry_mode -ne 0 ]]; then
+                        if ! zfs snapshot "${snapshot_opts[@]}" "$snap"; then
+                                log "[ERROR] failed to snapshot $ds" >&2
+                                return 1
+                        fi
+                else
+                        log "dry mode, nothing to do"
+                fi
+
+        fi
+
+        # If local and dest snapshots are identical and sync_only_mode enabled - exit
+        if [ "${rsnap#*@}" = "${snap#*@}" ]; then
+                if [[ $sync_only_mode -ne 0 ]]; then
+                        log "both sides are identical, skipped [sync only mode]"
+                        return 0
+                fi
+        fi
+
+
+        if [[ $sync_only_mode == 0 ]]; then
+                local snap=$ds@${snapshot_prefix}$(date '+%Y-%m-%d_%H:%M:%S')
+                log "creating snapshot locally (case2): $snap"
+                if [[ $dry_mode -ne 0 ]]; then
+
+                        if ! zfs snapshot "${snapshot_opts[@]}" "$snap"; then
+                                log "[ERROR] failed to snapshot $ds" >&2
+                                return 1
+                        fi
+                else
+                        log "dry mode, nothing done"
+                fi
+
+        fi
+
+        if [[ -n $inc_snap ]]; then
+                log "zfs sending incremental $snap [@$inc_snap] to $rds"
+        else
+                log "zfs sending full $snap to $rds"
+        fi
+
+        trace "zfs send ${send_opts[@]} ${inc_opts[@]} $snap -> zfs recv -Fuv $rds"
+
+
+        if [[ $dry_mode -eq 0 ]]; then
+                if ! zfs send "${send_opts[@]}" "${inc_opts[@]}" "$snap" | SSH zfs recv -Fuv "$rds"; then
+                       log "[ERROR] failed to send $snap to $remote_server $rds" >&2
+                       return 1
+                fi
+        else
+                log "dry mode, nothing to do "
+        fi
+
+        return 0
+}
+
+log "starting on $(date)"
+
+check_remote
+if [[ $? -eq 0 ]]; then
+        if [[ -n $dataset_pattern ]]; then
+                debug "dataset pattern set to: $dataset_pattern"
+                datasets+=($(zfs list -o name | grep $dataset_pattern))
+        fi
+
+        for ds in "${datasets[@]}"; do
+                process "$ds" || exitcode=1
+        done
+        for ds in "${datasets_recursive[@]}"; do
+                process "$ds" recursive || exitcode=1
+        done
+else
+        exitcode=1
+fi
+
+log '---------------------------------'
+msg='result: '
+#echo $exitcode
+
+case $exitcode in
+        0) msg+="ok [script ran for ~$((SECONDS / 60)) minutes ($SECONDS seconds)]";;
+        *) msg+="failed [script ran for ~$((SECONDS / 60)) minutes ($SECONDS seconds)]"
+        #       /opt/custom/bin/pushover zincrsend "$msg"
+        ;;
+esac
+log $msg
+log '---------------------------------'
+
+exit $exitcode
