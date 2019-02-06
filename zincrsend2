@@ -68,21 +68,21 @@ dry_mode=0
 ###########################################
 
 function usage {
-    echo "zincrsend2 v. $version "
-    echo "usage: zincrzend2 [options]"
-    echo "  -synconly			sync only existent snapshots (do not create a new one)"
-    echo "  -quiet				suppress any output"
-    echo "  -debug				debug mode (print more output)"
-    echo "  -trace				trace mode (print as much output as possible)"
-    echo "  -drymode			simulate only"
-    echo "  -fullstream			send full snapshots stream instead of commulative  one"
-    echo "  -remote_server		remote host IP/host"
-    echo "  -remote_port		remote host SSH port"
-    echo "  -remote_user		remote host username"
-    echo "  -remote_dataset		remote ZFS dataset"
-    echo "  -snapshot_prefix	process only snapshots that names begin with defined prefix"
-    echo "  -snapshot_filter	additional snapshots filter"
-    echo "  --help				print this help"
+    echo "zincrsend v. $version "
+    echo "usage: zincrzend [options]"
+    echo "  -synconly           sync only existent snapshots (do not create a new one)"
+    echo "  -quiet              suppress any output"
+    echo "  -debug              debug mode (print more output)"
+    echo "  -trace              trace mode (print as much output as possible)"
+    echo "  -drymode            simulate only"
+    echo "  -fullstream         send full snapshots stream instead of commulative  one"
+    echo "  -remote_server      remote host IP/host"
+    echo "  -remote_port        remote host SSH port"
+    echo "  -remote_user        remote host username"
+    echo "  -remote_dataset     remote ZFS dataset"
+    echo "  -snapshot_prefix    process only snapshots that names begin with defined prefix"
+    echo "  -snapshot_filter    additional snapshots filter"
+    echo "  --help  specify     print this help"
     exit 1
 }
 
