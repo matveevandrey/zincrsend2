@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 #
 # Incremental ZFS send/recv backup script
 #
@@ -19,9 +20,10 @@ version="0.3.2-05022019"
 
 # datasets to send
 #dataset_pattern='tank/pve/datastore'
-dataset_pattern='tank/pve/replica/pve/vm-'
+dataset_pattern='tank254/net17/replica/id59/pve/vm-'
+
 datasets=(
-#       tank/pve/datastore
+#       tank/dataset/pve/vm-100-disk-0
 )
 
 # datasets to send recursively
@@ -60,6 +62,10 @@ verbosity_level=0
 # simulate only
 dry_mode=0
 
+# keep ZFS tree 
+# 0: tank/dataset1/vol1 -> backup/dataset2/dataset1/vol1 
+# 1: tank/dataset1/vol1 -> backup/dataset2/vol1 
+keep_zfs_tree=0
 
 ###########################################
 # parse input variables and update config #
@@ -67,13 +73,14 @@ dry_mode=0
 
 function usage {
     echo "zincrsend2 v. $version "
-    echo "usage: zincrzend [options]"
+    echo "usage: zincrzend2 [options]"
     echo "  -synconly		sync only existent snapshots (do not create a new one)"
     echo "  --quiet		suppress any output"
     echo "  --debug		debug mode (print more output)"
     echo "  --trace		trace mode (print as much output as possible)"
     echo "  --drymode		simulate only"
-    echo "  --fullstream	send full snapshots stream instead of commulative  one"
+    echo "  --fullstream	send full snapshots stream instead of commulative one"
+    echo "  --keep_zfs_tree	keep ZFS tree on receiving side"
     echo "  -remote_server	remote host IP/host"
     echo "  -remote_port	remote host SSH port"
     echo "  -remote_user	remote host username"
@@ -104,6 +111,8 @@ do
            dry_mode=1;;
         "--fullstream" )
            send_full_stream=1;;
+        "--keep_zfs_tree" )
+           keep_zfs_tree=1;;
         "-remote_server" )
            remote_server=$1; shift;;
         "-remote_user" )
@@ -159,10 +168,12 @@ SSH() {
 check_remote() {
         debug "checking remote host '${remote_server}' availability [${remote_check}]"
 
+        local rds=$remote_dataset/${ds#*/}
         ## do we have a remote check defined
         if [ "${remote_check}x" != 'x' ]; then
                 ## run the check
                 $remote_check > /dev/null 2>&1
+        local rds=$remote_dataset/${ds#*/}
                 ## exit if above returned non-zero
                 if [ $? != 0 ]; then
                         log "[ERROR] remote health check '${remote_server}' failed!"
@@ -191,7 +202,7 @@ process() {
 
         debug "fetching latest local snapshot for dataset: $lds [prefix: %$snapshot_prefix%; filter=%$snapshot_filter%]"
 
-        # Get remote snapshots list
+        # Get local snapshots list
         local lsnaplist=($(zfs list -H -o name,creation -p -t snapshot -r "$lds" | \
                     grep "^$lds@" | \
                     grep "$snapshot_prefix" | \
@@ -209,7 +220,14 @@ process() {
         fi
 
         # Step 2 - find the latest remote snapshot
-        local rds=$remote_dataset/${ds#*/}
+	echo ${ds}
+	
+        if [[ $keep_zfs_tree -eq 0 ]]; then
+        	local rds=$remote_dataset/${ds##*/}
+        else
+        	local rds=$remote_dataset/${ds#*/}
+        fi
+
         local inc_snap=
         local inc_opts=()
 
