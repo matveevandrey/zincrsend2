@@ -10,7 +10,7 @@
 #
 #
 
-version="0.3.1-29012019"
+version="0.3.2-05022019"
 
 
 #########
@@ -22,7 +22,6 @@ version="0.3.1-29012019"
 dataset_pattern='tank/pve/replica/pve/vm-'
 datasets=(
 #       tank/pve/datastore
-        tank/pve/protected
 )
 
 # datasets to send recursively
@@ -34,12 +33,11 @@ datasets_recursive=(
 )
 
 # information about the server on the receiving end
-remote_server='172.16.51.254'
-#remote_server='localhost'
-remote_user='id51'
+remote_server='localhost'
+remote_user=''
 #remote_user='root'
 remote_port='22'
-remote_dataset='tank51/backup' # zpool name most likely
+remote_dataset='tank/backup' # zpool name most likely
 remote_command_prefix='' # leave blank for nothing
 #remote_ssh_opts=(-i /root/backup/backup.key) # additional opts to give to ssh
 remote_ssh_opts=()
@@ -68,21 +66,21 @@ dry_mode=0
 ###########################################
 
 function usage {
-    echo "zincrsend v. $version "
+    echo "zincrsend2 v. $version "
     echo "usage: zincrzend [options]"
-    echo "  -synconly           sync only existent snapshots (do not create a new one)"
-    echo "  -quiet              suppress any output"
-    echo "  -debug              debug mode (print more output)"
-    echo "  -trace              trace mode (print as much output as possible)"
-    echo "  -drymode            simulate only"
-    echo "  -fullstream         send full snapshots stream instead of commulative  one"
-    echo "  -remote_server      remote host IP/host"
-    echo "  -remote_port        remote host SSH port"
-    echo "  -remote_user        remote host username"
-    echo "  -remote_dataset     remote ZFS dataset"
-    echo "  -snapshot_prefix    process only snapshots that names begin with defined prefix"
-    echo "  -snapshot_filter    additional snapshots filter"
-    echo "  --help  specify     print this help"
+    echo "  -synconly		sync only existent snapshots (do not create a new one)"
+    echo "  --quiet		suppress any output"
+    echo "  --debug		debug mode (print more output)"
+    echo "  --trace		trace mode (print as much output as possible)"
+    echo "  --drymode		simulate only"
+    echo "  --fullstream	send full snapshots stream instead of commulative  one"
+    echo "  -remote_server	remote host IP/host"
+    echo "  -remote_port	remote host SSH port"
+    echo "  -remote_user	remote host username"
+    echo "  -remote_dataset	remote ZFS dataset"
+    echo "  -snapshot_prefix	process only snapshots that names begin with defined prefix"
+    echo "  -snapshot_filter	additional snapshots filter"
+    echo "  --help		print this help"
     exit 1
 }
 
@@ -94,17 +92,17 @@ do
     shift;
     case $opt in
         "--") break 2;;
-        "-synconly" )
+        "--synconly" )
            sync_only=1;;
-        "-quiet" )
+        "--quiet" )
            verbosity_level=-1;;
-        "-debug" )
+        "--debug" )
            verbosity_level=1;;
-        "-trace" )
+        "--trace" )
            verbosity_level=2;;
-        "-drymode" )
+        "--drymode" )
            dry_mode=1;;
-        "-fullstream" )
+        "--fullstream" )
            send_full_stream=1;;
         "-remote_server" )
            remote_server=$1; shift;;
