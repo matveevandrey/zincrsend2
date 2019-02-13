@@ -19,7 +19,7 @@ version="0.3.3-12022019"
 #########
 
 # datasets to send
-dataset_pattern='tank/data/'
+dataset_pattern=''
 
 datasets=(
 #       tank/dataset/pve/vm-100-disk-0
@@ -58,6 +58,8 @@ send_full_stream=0
 # higher = more output
 verbosity_level=0
 
+
+
 # simulate only
 dry_mode=0
 
@@ -73,20 +75,22 @@ keep_zfs_tree=0
 function usage {
     echo "zincrsend2 v. $version "
     echo "usage: zincrzend2 [options]"
-    echo "  -synconly           sync only existent snapshots (do not create a new one)"
-    echo "  --quiet             suppress any output"
-    echo "  --debug             debug mode (print more output)"
-    echo "  --trace             trace mode (print as much output as possible)"
-    echo "  --drymode           simulate only"
-    echo "  --fullstream        send full snapshots stream instead of commulative one"
-    echo "  --keep_zfs_tree     keep ZFS tree on receiving side"
-    echo "  -remote_server      remote host IP/host"
-    echo "  -remote_port        remote host SSH port"
-    echo "  -remote_user        remote host username"
-    echo "  -remote_dataset     remote ZFS dataset"
-    echo "  -snapshot_prefix    process only snapshots that names begin with defined prefix"
-    echo "  -snapshot_filter    additional snapshots filter"
-    echo "  --help              print this help"
+    echo "  -remote_server	remote host IP/host"
+    echo "  -remote_port		remote host SSH port"
+    echo "  -remote_user		remote host username"
+    echo "  -remote_dataset	remote ZFS dataset"
+    echo "  -snapshot_prefix	process only snapshots that start with defined prefix"
+    echo "  -dataset_pattern	process only datasets that fit defined pattern"
+    echo "  -snapshot_filter	additional snapshots filter"
+#    echo "  --recursively	process dataset recursively"
+    echo "  --synconly		sync only existent snapshots (do not create a new one)"
+    echo "  --quiet		suppress any output"
+    echo "  --debug		debug mode (print more output)"
+    echo "  --trace		trace mode (print as much output as possible)"
+    echo "  --drymode		simulate only"
+    echo "  --fullstream		send full snapshots stream instead of commulative one"
+    echo "  --keep_zfs_tree	keep ZFS tree on receiving side"
+    echo "  --help		print this help"
     exit 1
 }
 
@@ -112,6 +116,8 @@ do
            send_full_stream=1;;
         "--keep_zfs_tree" )
            keep_zfs_tree=1;;
+        "-dataset_pattern" )
+           dataset_pattern=$1; shift;;
         "-remote_server" )
            remote_server=$1; shift;;
         "-remote_user" )
@@ -165,19 +171,21 @@ SSH() {
 
 ## check remote system availibility
 check_remote() {
-        debug "checking remote host '${remote_server}' availability [${remote_check}]"
+        local rds=$remote_dataset/${ds#*/}
+        debug "checking remote host '${remote_server}' health [${remote_check}]"
 
         local rds=$remote_dataset/${ds#*/}
         ## do we have a remote check defined
         if [ "${remote_check}x" != 'x' ]; then
                 ## run the check
                 $remote_check > /dev/null 2>&1
-        local rds=$remote_dataset/${ds#*/}
+
                 ## exit if above returned non-zero
                 if [ $? != 0 ]; then
-                        log "[ERROR] remote health check '${remote_server}' failed!"
+                        log "[ERROR] remote host health check '${remote_server}' failed!"
                         return 1
                 fi
+        debug "remote host '${remote_server}' is alive"
         fi
         return 0
 }
@@ -247,8 +255,8 @@ process() {
                 inc_snap=${rsnap#*@}
                 # assert that $inc_snap exists locally
                 debug "ckecking $ds@$inc_snap exists localy"
-                debug "zfs list -t snapshot $ds@$inc_snap"
-                if ! zfs list -t snapshot "$ds@$inc_snap" &>/dev/null; then
+                debug "zfs list -H -t snapshot $ds@$inc_snap"
+                if ! zfs list -H -t snapshot "$ds@$inc_snap" &>/dev/null; then
                         log "could not find $rsnap locally ($ds@$inc_snap not found)" >&2
                         debug "calculating most recent common snapshot"
                         local csnaplist=($(comm -12 <(printf '%s\n' "${lsnaplist[@]#*@}" | LC_ALL=C sort) <(printf '%s\n' "${rsnaplist[@]#*@}" | LC_ALL=C sort)))
@@ -288,7 +296,7 @@ process() {
                                 return 1
                         fi
                 else
-                        log "dry mode, nothing to do"
+                        log "dry mode, nothing really done"
                 fi
 
         fi
@@ -332,7 +340,7 @@ process() {
                        return 1
                 fi
         else
-                log "dry mode, nothing to do "
+                log "dry mode, nothing really done"
         fi
 
         return 0
@@ -342,10 +350,11 @@ log "starting on $(date)"
 
 check_remote
 if [[ $? -eq 0 ]]; then
-        if [[ -n $dataset_pattern ]]; then
-                debug "dataset pattern set to: $dataset_pattern"
-                datasets+=($(zfs list -o name | grep $dataset_pattern))
-        fi
+#        if [[ -n $dataset_pattern ]]; then
+	debug "dataset pattern: $dataset_pattern"
+	datasets+=($(zfs list -H -o name | grep "$dataset_pattern"))
+        trace "process datasets: $(IFS=$'\n'; echo "${datasets[*]}")"
+#        fi
 
         for ds in "${datasets[@]}"; do
                 process "$ds" || exitcode=1
@@ -354,6 +363,7 @@ if [[ $? -eq 0 ]]; then
                 process "$ds" recursive || exitcode=1
         done
 else
+	debug ""
         exitcode=1
 fi
 
