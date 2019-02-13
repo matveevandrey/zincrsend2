@@ -11,7 +11,7 @@
 #
 #
 
-version="0.3.2-05022019"
+version="0.3.3-12022019"
 
 
 #########
@@ -19,8 +19,7 @@ version="0.3.2-05022019"
 #########
 
 # datasets to send
-#dataset_pattern='tank/pve/datastore'
-dataset_pattern='tank254/net17/replica/id59/pve/vm-'
+dataset_pattern='tank/data/'
 
 datasets=(
 #       tank/dataset/pve/vm-100-disk-0
@@ -62,9 +61,9 @@ verbosity_level=0
 # simulate only
 dry_mode=0
 
-# keep ZFS tree 
-# 0: tank/dataset1/vol1 -> backup/dataset2/dataset1/vol1 
-# 1: tank/dataset1/vol1 -> backup/dataset2/vol1 
+# keep ZFS tree
+# 0: tank/dataset1/vol1 -> backup/dataset2/dataset1/vol1
+# 1: tank/dataset1/vol1 -> backup/dataset2/vol1
 keep_zfs_tree=0
 
 ###########################################
@@ -74,20 +73,20 @@ keep_zfs_tree=0
 function usage {
     echo "zincrsend2 v. $version "
     echo "usage: zincrzend2 [options]"
-    echo "  -synconly		sync only existent snapshots (do not create a new one)"
-    echo "  --quiet		suppress any output"
-    echo "  --debug		debug mode (print more output)"
-    echo "  --trace		trace mode (print as much output as possible)"
-    echo "  --drymode		simulate only"
-    echo "  --fullstream	send full snapshots stream instead of commulative one"
-    echo "  --keep_zfs_tree	keep ZFS tree on receiving side"
-    echo "  -remote_server	remote host IP/host"
-    echo "  -remote_port	remote host SSH port"
-    echo "  -remote_user	remote host username"
-    echo "  -remote_dataset	remote ZFS dataset"
-    echo "  -snapshot_prefix	process only snapshots that names begin with defined prefix"
-    echo "  -snapshot_filter	additional snapshots filter"
-    echo "  --help		print this help"
+    echo "  -synconly           sync only existent snapshots (do not create a new one)"
+    echo "  --quiet             suppress any output"
+    echo "  --debug             debug mode (print more output)"
+    echo "  --trace             trace mode (print as much output as possible)"
+    echo "  --drymode           simulate only"
+    echo "  --fullstream        send full snapshots stream instead of commulative one"
+    echo "  --keep_zfs_tree     keep ZFS tree on receiving side"
+    echo "  -remote_server      remote host IP/host"
+    echo "  -remote_port        remote host SSH port"
+    echo "  -remote_user        remote host username"
+    echo "  -remote_dataset     remote ZFS dataset"
+    echo "  -snapshot_prefix    process only snapshots that names begin with defined prefix"
+    echo "  -snapshot_filter    additional snapshots filter"
+    echo "  --help              print this help"
     exit 1
 }
 
@@ -220,12 +219,12 @@ process() {
         fi
 
         # Step 2 - find the latest remote snapshot
-	echo ${ds}
-	
+        echo ${ds}
+
         if [[ $keep_zfs_tree -eq 0 ]]; then
-        	local rds=$remote_dataset/${ds##*/}
+                local rds=$remote_dataset/${ds##*/}
         else
-        	local rds=$remote_dataset/${ds#*/}
+                local rds=$remote_dataset/${ds#*/}
         fi
 
         local inc_snap=
@@ -252,11 +251,11 @@ process() {
                 if ! zfs list -t snapshot "$ds@$inc_snap" &>/dev/null; then
                         log "could not find $rsnap locally ($ds@$inc_snap not found)" >&2
                         debug "calculating most recent common snapshot"
-                        csnaplist=($(comm -12 <(printf '%s\n' "${lsnaplist[@]#*@}" | LC_ALL=C sort) <(printf '%s\n' "${rsnaplist[@]#*@}" | LC_ALL=C sort)))
+                        local csnaplist=($(comm -12 <(printf '%s\n' "${lsnaplist[@]#*@}" | LC_ALL=C sort) <(printf '%s\n' "${rsnaplist[@]#*@}" | LC_ALL=C sort)))
                         trace "common snapshots list: $(IFS=$'\n'; echo "${csnaplist[*]}")"
 
-                        inc_snap=${csnaplist[-1]}
-                        if [[ -n $inc_snap ]]; then
+                        if [[ -n ${csnaplist[0]} ]]; then
+                                inc_snap=${csnaplist[-1]}
                                 log "latest common snapshot: $inc_snap"
                         else
                                 log "[ERROR] could not find any common snapshots"
@@ -272,18 +271,18 @@ process() {
                         inc_opts+=(-I "@$inc_snap")
                 fi
         else
-                log "no remote snapshot found for $ds"
+                log "no remote snapshots found for $ds"
         fi
 
 
         # Step 3: send from latest common to latest local
         # or do a full send
 
-        # If not local snapshots - create it
+        # If there are no local snapshots - create one
         if ! [[ -n $snap ]]; then
-                local snap=$ds@${snapshot_prefix}$(date '+%Y-%m-%d_%H:%M:%S')
+                local snap=$ds@${snapshot_prefix}-$(date '+%Y-%m-%d_%H:%M:%S')
                 log "creating snapshot locally (case1): $snap"
-                if [[ $dry_mode -ne 0 ]]; then
+                if [[ $dry_mode -eq 0 ]]; then
                         if ! zfs snapshot "${snapshot_opts[@]}" "$snap"; then
                                 log "[ERROR] failed to snapshot $ds" >&2
                                 return 1
@@ -306,7 +305,7 @@ process() {
         if [[ $sync_only_mode == 0 ]]; then
                 local snap=$ds@${snapshot_prefix}$(date '+%Y-%m-%d_%H:%M:%S')
                 log "creating snapshot locally (case2): $snap"
-                if [[ $dry_mode -ne 0 ]]; then
+                if [[ $dry_mode -eq 0 ]]; then
 
                         if ! zfs snapshot "${snapshot_opts[@]}" "$snap"; then
                                 log "[ERROR] failed to snapshot $ds" >&2
