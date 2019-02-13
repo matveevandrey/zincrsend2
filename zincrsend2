@@ -58,8 +58,6 @@ send_full_stream=0
 # higher = more output
 verbosity_level=0
 
-
-
 # simulate only
 dry_mode=0
 
@@ -171,10 +169,8 @@ SSH() {
 
 ## check remote system availibility
 check_remote() {
-        local rds=$remote_dataset/${ds#*/}
         debug "checking remote host '${remote_server}' health [${remote_check}]"
 
-        local rds=$remote_dataset/${ds#*/}
         ## do we have a remote check defined
         if [ "${remote_check}x" != 'x' ]; then
                 ## run the check
