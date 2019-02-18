@@ -11,7 +11,7 @@
 #
 #
 
-version="0.3.3-12022019"
+version="0.3.4-18022019"
 
 
 #########
@@ -61,10 +61,15 @@ verbosity_level=0
 # simulate only
 dry_mode=0
 
+# timestamp format
+#timestamp='%Y-%m-%d_%H:%M:%S'
+timestamp='%Y-%m-%d-%H%M'
+
 # keep ZFS tree
 # 0: tank/dataset1/vol1 -> backup/dataset2/dataset1/vol1
 # 1: tank/dataset1/vol1 -> backup/dataset2/vol1
 keep_zfs_tree=0
+
 
 ###########################################
 # parse input variables and update config #
@@ -80,6 +85,7 @@ function usage {
     echo "  -snapshot_prefix	process only snapshots that start with defined prefix"
     echo "  -dataset_pattern	process only datasets that fit defined pattern"
     echo "  -snapshot_filter	additional snapshots filter"
+    echo "  -timestamp		snapshot name timestamp format (default: %Y-%m-%d-%H%M)"
 #    echo "  --recursively	process dataset recursively"
     echo "  --synconly		sync only existent snapshots (do not create a new one)"
     echo "  --quiet		suppress any output"
@@ -114,6 +120,8 @@ do
            send_full_stream=1;;
         "--keep_zfs_tree" )
            keep_zfs_tree=1;;
+        "-timestamp" )
+           timestamp=$1; shift;;
         "-dataset_pattern" )
            dataset_pattern=$1; shift;;
         "-remote_server" )
@@ -200,7 +208,6 @@ process() {
         log "processing dataset: $ds"
 
         # Step 1 - Geting the latest local snapshot or take snapshot locally (if none exists)
-        local now=$(date +%s)
         local lds=${ds/}
 
         debug "fetching latest local snapshot for dataset: $lds [prefix: %$snapshot_prefix%; filter=%$snapshot_filter%]"
@@ -284,7 +291,7 @@ process() {
 
         # If there are no local snapshots - create one
         if ! [[ -n $snap ]]; then
-                local snap=$ds@${snapshot_prefix}-$(date '+%Y-%m-%d_%H:%M:%S')
+                local snap=$ds@${snapshot_prefix}-$(date '+'$timestamp)
                 log "creating snapshot locally (case1): $snap"
                 if [[ $dry_mode -eq 0 ]]; then
                         if ! zfs snapshot "${snapshot_opts[@]}" "$snap"; then
@@ -307,7 +314,7 @@ process() {
 
 
         if [[ $sync_only_mode == 0 ]]; then
-                local snap=$ds@${snapshot_prefix}$(date '+%Y-%m-%d_%H:%M:%S')
+                local snap=$ds@${snapshot_prefix}-$(date '+'$timestamp)
                 log "creating snapshot locally (case2): $snap"
                 if [[ $dry_mode -eq 0 ]]; then
 
@@ -359,7 +366,6 @@ if [[ $? -eq 0 ]]; then
                 process "$ds" recursive || exitcode=1
         done
 else
-	debug ""
         exitcode=1
 fi
 
